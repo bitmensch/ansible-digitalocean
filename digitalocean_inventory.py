@@ -4,17 +4,20 @@
 DigitalOcean external inventory script
 =================================
 
-Generates inventory that Ansible can understand by making API request to
-DigitalOcean using the python-digitalocean library.
+Generates inventory that Ansible can understand by making API requests to DigitalOcean.
 
-This script assumes Ansible is being executed where the following
-environment have already been set:
+When run without arguments (or with --list),
+When run against a specific droplet host, returns informaiton about that droplet.
+
+Configuration is read from digitalocean.ini, then from environment variables, then
+and command-line arguments.  
+
+Most notably, the DigitalOcean Client ID and API Key must be specified.  They can
+be specified in the INI file or with the following environment variables:
     export DIGITALOCEAN_CLIENT_ID='DO123'
     export DIGITALOCEAN_API_KEY='abc123'
 
-Alternative, they can be passed on the command-line with --client-id and --api-key.
-
-When run against a specific droplet host, returns informaiton about that droplet.
+Alternatively, they can be passed on the command-line with --client-id and --api-key.
 
 '''
 
@@ -44,6 +47,7 @@ import os
 import sys
 import argparse
 from time import time
+import ConfigParser
 
 try:
     import json
@@ -62,28 +66,30 @@ class DigitalOceanInventory(object):
     def __init__(self):
         ''' Main execution path '''
 
-        # Inventory of droplets, grouped by droplets, regions, images, ssh_keys, 
-        # sizes, domains
+        # Inventory of droplets
         self.inventory = {}
 
         # Index of hostname (address) to droplet ID
         self.index = {}
 
-        # Read settings and parse CLI arguments
-        #TODO self.read_settings()
+        # Read settings, environment variables, and CLI arguments
+        self.read_settings()
+        self.read_environment()
         self.parse_cli_args()
 
-        # Setup credentials
-        self.client_id = self.args.client_id or os.getenv("DIGITALOCEAN_CLIENT_ID")
-        self.api_key = self.args.api_key or os.getenv("DIGITALOCEAN_API_KEY")
-
-        # Setup cache
-        cache_path = self.args.cache_path or os.getenv("DIGITALOCEAN_CACHE_PATH") or '.'
-        self.cache_path_cache = cache_path + "/ansible-digitalocean.cache"
-        self.cache_path_index = cache_path + "/ansible-digitalocean.index"
-        self.cache_max_age = self.args.cache_max_age or os.getenv("DIGITALOCEAN_CACHE_MAX_AGE") or 0
+        # Verify credentials were set
+        if not hasattr(self, 'client_id') or not hasattr(self, 'api_key'):
+            print '''Could not find DigitalOcean values for client_id and api_key.
+They must be specified, via either ini file, command line argument (--client-id and --api-key),
+or environment variables (DIGITALOCEAN_CLIENT_ID and DIGITALOCEAN_API_KEY)'''
+            sys.exit(-1)
 
         # Check cache
+        self.cache_path = self.cache_path or '.'
+        self.cache_max_age = self.cache_max_age or 0
+        self.cache_path_cache = self.cache_path + "/ansible-digitalocean.cache"
+        self.cache_path_index = self.cache_path + "/ansible-digitalocean.index"
+
         if self.args.refresh_cache:
             self.do_api_calls_update_cache()
         elif not self.is_cache_valid():
@@ -126,6 +132,33 @@ class DigitalOceanInventory(object):
         return False
 
 
+    def read_settings(self):
+        ''' Reads the settings from the digitalocean.ini file '''
+
+        config = ConfigParser.SafeConfigParser()
+        config.read(os.path.dirname(os.path.realpath(__file__)) + '/digitalocean.ini')
+
+        # Credentials
+        if config.has_option('digitalocean', 'client_id'):
+            self.client_id = config.get('digitalocean', 'client_id')
+        if config.has_option('digitalocean', 'api_key'):
+            self.api_key = config.get('digitalocean', 'api_key')
+
+        # Cache related
+        if config.has_option('digitalocean', 'cache_path'):
+            self.cache_path = config.get('digitalocean', 'cache_path')
+        if config.has_option('digitalocean', 'cache_max_age'):
+            self.cache_max_age = config.getint('digitalocean', 'cache_max_age')
+    
+
+    def read_environment(self):
+        ''' Reads the settings from environment variables '''
+
+        # Setup credentials
+        if os.getenv("DIGITALOCEAN_CLIENT_ID"): self.client_id = os.getenv("DIGITALOCEAN_CLIENT_ID")
+        if os.getenv("DIGITALOCEAN_API_KEY"):   self.api_key = os.getenv("DIGITALOCEAN_API_KEY")
+
+
     def parse_cli_args(self):
         ''' Command line argument processing '''
 
@@ -149,6 +182,11 @@ class DigitalOceanInventory(object):
 
         self.args = parser.parse_args()
 
+        if self.args.client_id: self.client_id = self.args.client_id
+        if self.args.api_key: self.api_key = self.args.api_key
+        if self.args.cache_path: self.cache_path = self.args.cache_path
+        if self.args.cache_max_age: self.cache_max_age = self.args.cache_max_age
+
 
     def do_api_calls_update_cache(self):
         ''' Do API calls to get the droplets, and save data in cache files '''
@@ -167,7 +205,7 @@ class DigitalOceanInventory(object):
 
 
     def get_droplet(self, droplet_id):
-        '''Get details about a specific droplet '''
+        ''' Get details about a specific droplet '''
         return self.__do_api('/droplets/'+str(droplet_id))['droplet']
 
 
