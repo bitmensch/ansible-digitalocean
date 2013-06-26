@@ -72,6 +72,10 @@ class DigitalOceanInventory(object):
         # Index of hostname (address) to droplet ID
         self.index = {}
 
+        # Define defaults
+        self.cache_path = '.'
+        self.cache_max_age = 0
+
         # Read settings, environment variables, and CLI arguments
         self.read_settings()
         self.read_environment()
@@ -85,8 +89,6 @@ or environment variables (DIGITALOCEAN_CLIENT_ID and DIGITALOCEAN_API_KEY)'''
             sys.exit(-1)
 
         # Check cache
-        self.cache_path = self.cache_path or '.'
-        self.cache_max_age = self.cache_max_age or 0
         self.cache_path_cache = self.cache_path + "/ansible-digitalocean.cache"
         self.cache_path_index = self.cache_path + "/ansible-digitalocean.index"
 
